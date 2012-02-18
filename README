@@ -1,0 +1,12 @@
+ctntad is an implementation of the Tuning Adapter <-> MOCUR Service for the
+Ceton InfiniTV on linux. It could also run on darwin or windows, if the
+library dependencies were met. It depends on gupnp and gusb.
+
+To build from a fresh clone run:
+autoreconf -i
+./configure
+make
+
+Successive updates should generally only require running make
+
+
