@@ -17,7 +17,7 @@ AC_PROG_CC
 
 # Checks for libraries.
 PKG_CHECK_MODULES(GUPNP, gupnp-1.0)
-PKG_CHECK_MODULES(GTHREAD, gthread-2.0)
+PKG_CHECK_MODULES(GUSB, gusb)
 
 # Checks for header files.
 AC_CHECK_HEADERS(stdlib.h)
