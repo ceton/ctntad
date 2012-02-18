@@ -1,0 +1,5 @@
+AM_CFLAGS = $(GUPNP_CFLAGS) $(GTHREAD_CFLAGS)
+
+bin_PROGRAMS = ctntad
+ctntad_SOURCES = main.c
+ctntad_LDFLAGS = $(GTHREAD_LIBS) $(GUPNP_LIBS)
