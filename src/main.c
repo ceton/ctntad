@@ -6,6 +6,12 @@
 #include <stdlib.h>
 
 typedef struct {
+    GUPnPDeviceProxy* mocur;
+    GUPnPServiceProxy* octa;
+    GUsbDevice* ta;
+} Pair;
+
+typedef struct {
     GPtrArray* tas;
     GPtrArray* mocurs;
     GMainLoop* main_loop;
@@ -13,25 +19,108 @@ typedef struct {
     GUPnPControlPoint* cp;
     GUsbContext* usb_context;
     GUsbDeviceList* usb_list;
+    GPtrArray* pairs;
 } CtnTa;
 
 static void
-device_proxy_available_cb(GUPnPControlPoint* cp, GUPnPDeviceProxy* proxy)
+pair(CtnTa* ct)
 {
+    while( ct->mocurs->len && ct->tas->len ) {
+        GUPnPDeviceProxy* mocur = g_ptr_array_index( ct->mocurs, 0 );
+        GUsbDevice* ta = g_ptr_array_index( ct->tas, 0 );
+
+        Pair* p = g_slice_new0( Pair );
+        p->mocur = mocur;
+        p->ta = ta;
+     
+        g_ptr_array_remove_index( ct->mocurs, 0 );
+        g_ptr_array_remove_index( ct->tas, 0 );
+        g_ptr_array_add( ct->pairs, p );
+    }
+}
+
+static void
+device_proxy_available_cb(GUPnPControlPoint* cp, GUPnPDeviceProxy* proxy, gpointer user_data)
+{
+    CtnTa* ct = user_data;
     GError* error = NULL;
-    g_print("device found");
+    const char* device_type = gupnp_device_info_get_device_type( GUPNP_DEVICE_INFO(proxy) );
+    g_print("root device found type: '%s'\n", device_type);
+    if( strcmp( device_type, "urn:schemas-cetoncorp-com:device:SecureContainer:1" ) == 0 ) {
+        g_print("mocur found\n");
+        g_ptr_array_add( ct->mocurs, proxy );
+        pair( ct );
+    }
+}
+
+static void
+remove_mocur(
+        CtnTa* ct,
+        GUPnPDeviceProxy* mocur)
+{
+    int i;
+    const char* udn_remove = gupnp_device_info_get_udn( GUPNP_DEVICE_INFO(mocur) );
+
+    //first check pairings
+    for( i=0; i<ct->pairs->len; i++ ) {
+        Pair* p = g_ptr_array_index( ct->pairs, i );
+        const char* udn = gupnp_device_info_get_udn( GUPNP_DEVICE_INFO(p->mocur) );
+        if( strcmp( udn, udn_remove ) == 0 ) {
+            g_ptr_array_remove_index_fast( ct->pairs, i );
+
+            g_ptr_array_add( ct->tas, p->ta );
+            g_object_unref( p->octa );
+            g_object_unref( p->mocur );
+            g_free( p );
+            break;
+        }
+    }
+
+    for( i=0; i<ct->mocurs->len; i++ ) {
+        GUPnPDeviceProxy* m = g_ptr_array_index( ct->mocurs, i );
+        const char* udn = gupnp_device_info_get_udn( GUPNP_DEVICE_INFO(m) );
+        if( strcmp( udn, udn_remove ) == 0 ) {
+            g_ptr_array_remove_index_fast( ct->mocurs, i );
+            break;
+        }
+    }
+}
+
+static void
+device_proxy_unavailable_cb(GUPnPControlPoint* cp, GUPnPDeviceProxy* proxy, gpointer user_data)
+{
+    CtnTa* ct = user_data;
+    remove_mocur( ct, proxy );
 }
 
 static void
 setup_upnp(CtnTa* ct)
 {
-    ct->cp = gupnp_control_point_new( ct->context, "urn:schemas-cetoncorp-com:device:SecureContainer:1" );
+    ct->cp = gupnp_control_point_new( ct->context, "upnp:rootdevice" );
 
     g_signal_connect( ct->cp, "device-proxy-available",
             G_CALLBACK(device_proxy_available_cb),
             ct );
 
+    g_signal_connect( ct->cp, "device-proxy-unavailable",
+            G_CALLBACK(device_proxy_unavailable_cb),
+            ct );
+
     gssdp_resource_browser_set_active( GSSDP_RESOURCE_BROWSER(ct->cp), TRUE );
+}
+
+static void
+check_for_ta(
+        CtnTa* ct,
+        GUsbDevice* device)
+{
+    guint16 vid = g_usb_device_get_vid( device );
+    guint16 pid = g_usb_device_get_pid( device );
+    if( ( vid == 0x07b2 && pid == 0x6002 ) ||
+            ( vid == 0x05a6 && pid == 0x0008 ) ) {
+        g_ptr_array_add( ct->tas, device );
+        pair( ct ); 
+    }
 }
 
 static void
@@ -40,10 +129,48 @@ usb_device_list_added_cb(
         GUsbDevice* device,
         gpointer user_data)
 {
+    CtnTa* ct = user_data;
     g_print("device %s added %x:%x\n",
             g_usb_device_get_platform_id( device ),
             g_usb_device_get_bus( device ),
             g_usb_device_get_address( device ));
+    check_for_ta( ct, device );
+}
+
+static void
+check_for_removed_ta(
+        CtnTa* ct,
+        GUsbDevice* device)
+{
+    guint8 bus_remove = g_usb_device_get_bus( device );
+    guint8 address_remove = g_usb_device_get_address( device );
+
+    int i;
+    //check pairings for this usb device first
+    for( i=0; i<ct->pairs->len; i++ ) {
+        Pair* p = g_ptr_array_index( ct->pairs, i );
+        guint8 bus = g_usb_device_get_bus( p->ta );
+        guint8 address = g_usb_device_get_address( p->ta );
+        if( ( bus == bus_remove ) && ( address == address_remove ) ) {
+
+            g_ptr_array_remove_index_fast( ct->pairs, i );
+
+            g_ptr_array_add( ct->mocurs, p->mocur );
+            g_object_unref( p->octa );
+            g_object_unref( p->ta );
+            g_free( p );
+            break;
+        }
+    }
+
+    for( i=0; i<ct->tas->len; i++ ) {
+        GUsbDevice* d = g_ptr_array_index( ct->tas, i );
+        guint8 bus = g_usb_device_get_bus( d );
+        guint8 address = g_usb_device_get_address( d );
+        if( ( bus == bus_remove ) && ( address == address_remove ) ) {
+            g_ptr_array_remove_index_fast( ct->tas, i );
+        }
+    }
 }
 
 static void
@@ -52,10 +179,12 @@ usb_device_list_removed_cb(
         GUsbDevice* device,
         gpointer user_data)
 {
+    CtnTa* ct = user_data;
     g_print("device %s removed %x:%x\n",
             g_usb_device_get_platform_id( device ),
             g_usb_device_get_bus( device ),
             g_usb_device_get_address( device ));
+    check_for_removed_ta( ct, device );
 }
 
 static void
@@ -71,9 +200,7 @@ setup_usb(CtnTa* ct)
     devices = g_usb_device_list_get_devices( ct->usb_list );
     for( i=0; i<devices->len; i++ ) {
         device = g_ptr_array_index( devices, i );
-        g_print("usb device %x:%x\n",
-                g_usb_device_get_bus(device),
-                g_usb_device_get_address(device));
+        check_for_ta( ct, device );
     }
 
     g_signal_connect( ct->usb_list, "device-added",
@@ -96,6 +223,9 @@ int main(int argc, char** argv)
 
     CtnTa* ct = g_slice_new0( CtnTa );
 
+    ct->mocurs = g_ptr_array_new();
+    ct->tas = g_ptr_array_new();
+    ct->pairs = g_ptr_array_new();
     ct->context = gupnp_context_new( NULL, NULL, 0, &error );
 
     if( error ) {
@@ -126,6 +256,9 @@ int main(int argc, char** argv)
     g_object_unref( ct->context );
     g_object_unref( ct->usb_list );
     g_object_unref( ct->usb_context );
+    g_ptr_array_unref( ct->mocurs );
+    g_ptr_array_unref( ct->tas );
+    g_ptr_array_unref( ct->pairs );
 
     g_slice_free( CtnTa, ct );
 
