@@ -11,11 +11,25 @@
 
 #include "octa_client.h"
 
+#define TA_EP_IN 0 //read
+#define TA_EP_OUT 1 //write
+#define TA_TIMEOUT 10000 //ms
+#define TA_BUFFER_SIZE 4096
+#define TA_RECV_BUFFERS 10
+
+typedef struct _Pair Pair;
+
 typedef struct {
+    Pair* p;
+    guchar buffer[TA_BUFFER_SIZE];
+} TABuffer;
+
+struct _Pair {
     GUPnPDeviceProxy* mocur;
     GUPnPServiceProxy* octa;
     GUsbDevice* ta;
-} Pair;
+    TABuffer ta_buffers[TA_RECV_BUFFERS];
+};
 
 typedef struct {
     GPtrArray* tas;
@@ -28,15 +42,58 @@ typedef struct {
     GPtrArray* pairs;
 } CtnTa;
 
+
+static void usb_reset_complete_finished(
+        GUPnPServiceProxy *proxy,
+        GError *error,
+        gpointer userdata)
+{
+    g_print("usb reset complete finished\n");
+}
+
+static void
+reset_ta(
+        Pair* p)
+{
+    g_print("reset ta\n");
+    //TODO move this to async call
+    GError* error = NULL;
+    
+    if( !g_usb_device_reset( p->ta, &error ) ) {
+        g_printerr("ta reset failed %s\n", error->message);
+        g_error_free( error );
+    }
+    g_print("reset done\n");
+    usb_reset_complete_async( p->octa, usb_reset_complete_finished, p );
+}
+
 static void
 ta_communication_error_changed(
         GUPnPServiceProxy *proxy,
         gboolean ta_communication_error,
         gpointer userdata)
 {
+    Pair* p = userdata;
     g_print("ta comm error %d\n", ta_communication_error);
     if( ta_communication_error ) {
-        //TODO do usb reset
+        reset_ta(p);
+    }
+}
+
+static void
+udcp_message_sent(
+        GObject* source,
+        GAsyncResult* res,
+        gpointer user_data)
+{
+    GError* error = NULL;
+    Pair* p = user_data;
+    g_usb_device_bulk_transfer_finish( p->ta, res, &error );
+
+    if( error ) {
+        g_printerr("ta write failed %s\n", error->message);
+        g_error_free( error );
+        return;
     }
 }
 
@@ -46,9 +103,98 @@ udcp_message_changed(
         const gchar *udcp_message,
         gpointer userdata)
 {
+    Pair* p = userdata;
     g_print("udcp message %s\n", udcp_message);
+
+    gsize len = 0;
+    guchar* message = g_base64_decode( udcp_message, &len );
+
+    g_usb_device_bulk_transfer_async( p->ta,
+            TA_EP_OUT,
+            message,
+            len,
+            TA_TIMEOUT,
+            NULL,
+            udcp_message_sent,
+            p);
 }
 
+
+static void message_to_udcp_sent(
+        GUPnPServiceProxy *proxy,
+        GError *error,
+        gpointer userdata)
+{
+}
+
+
+static void
+ta_message_ready(
+        GObject* source,
+        GAsyncResult* res,
+        gpointer user_data)
+{
+    GError* error = NULL;
+    TABuffer* tab = user_data;
+    Pair* p = tab->p;
+    gssize len = g_usb_device_bulk_transfer_finish( p->ta, res, &error );
+
+    if( error ) {
+        g_printerr("ta read failed %s\n", error->message);
+        g_error_free( error );
+
+        //TODO resubmit? or remove device?
+        return;
+    }
+
+    gchar* encoded = g_base64_encode( tab->buffer, len );
+
+    send_message_to_udcp_async(
+            p->octa,
+            encoded,
+            message_to_udcp_sent,
+            p);
+
+    //resubmit
+    g_usb_device_bulk_transfer_async(
+            p->ta,
+            TA_EP_IN,
+            tab->buffer,
+            TA_BUFFER_SIZE,
+            0,
+            NULL,
+            ta_message_ready,
+            tab);
+}
+
+static void
+submit_ta_buffers(
+        Pair* p)
+{
+    int i;
+    for( i=0; i<TA_RECV_BUFFERS; i++ ) {
+        p->ta_buffers[i].p = p;
+        g_usb_device_bulk_transfer_async(
+                p->ta,
+                TA_EP_IN,
+                p->ta_buffers[i].buffer,
+                TA_BUFFER_SIZE,
+                0,
+                NULL,
+                ta_message_ready,
+                &p->ta_buffers[i]);
+    }
+}
+
+
+static void
+octa_init_complete(
+        GUPnPServiceProxy *proxy,
+        GError *error,
+        gpointer userdata)
+{
+    g_print("octa init complete\n");
+}
 
 static void
 pair(CtnTa* ct)
@@ -94,6 +240,9 @@ pair(CtnTa* ct)
         udcp_message_add_notify(p->octa,
                 udcp_message_changed,
                 p);
+
+        submit_ta_buffers(p);
+        octa_init_async(p->octa, TRUE, octa_init_complete, p);
     }
 }
 
