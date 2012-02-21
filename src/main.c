@@ -1,9 +1,15 @@
 #include "config.h"
 
+#define MOCUR_DEVICE_TYPE "urn:schemas-cetoncorp-com:device:SecureContainer:1"
+#define OCTA_DEVICE_TYPE "urn:schemas-cetoncorp-com:device:SecureContainer:1"
+#define OCTA_SERVICE_TYPE "urn:schemas-microsoft-com:service:OCTAMessage:1"
+
 #define G_USB_API_IS_SUBJECT_TO_CHANGE
 #include <gusb.h>
 #include <libgupnp/gupnp.h>
 #include <stdlib.h>
+
+#include "octa_client.h"
 
 typedef struct {
     GUPnPDeviceProxy* mocur;
@@ -23,6 +29,28 @@ typedef struct {
 } CtnTa;
 
 static void
+ta_communication_error_changed(
+        GUPnPServiceProxy *proxy,
+        gboolean ta_communication_error,
+        gpointer userdata)
+{
+    g_print("ta comm error %d\n", ta_communication_error);
+    if( ta_communication_error ) {
+        //TODO do usb reset
+    }
+}
+
+static void
+udcp_message_changed(
+        GUPnPServiceProxy* proxy,
+        const gchar *udcp_message,
+        gpointer userdata)
+{
+    g_print("udcp message %s\n", udcp_message);
+}
+
+
+static void
 pair(CtnTa* ct)
 {
     while( ct->mocurs->len && ct->tas->len ) {
@@ -32,10 +60,40 @@ pair(CtnTa* ct)
         Pair* p = g_slice_new0( Pair );
         p->mocur = mocur;
         p->ta = ta;
+
+        //get first octa instance
+        GList* devices = gupnp_device_info_list_devices( GUPNP_DEVICE_INFO(p->mocur) );
+        GList* i = devices;
+        for( ; i; i = g_list_next(i) ) {
+            GUPnPDeviceProxy* sub_device = GUPNP_DEVICE_PROXY(i->data);
+            const char* type = gupnp_device_info_get_device_type( GUPNP_DEVICE_INFO(sub_device) );
+            if( strcmp( type, OCTA_DEVICE_TYPE ) == 0 ) {
+                p->octa = GUPNP_SERVICE_PROXY(gupnp_device_info_get_service( GUPNP_DEVICE_INFO(sub_device), OCTA_SERVICE_TYPE ));
+                break;
+            }
+        }
+        g_list_free(devices);
+
+        
+        const char* udn = gupnp_device_info_get_udn( GUPNP_DEVICE_INFO(p->mocur) );
+        guint8 bus = g_usb_device_get_bus( p->ta );
+        guint8 address = g_usb_device_get_address( p->ta );
+
+        g_print("paired '%s' and %x:%x\n", udn, bus, address);
      
         g_ptr_array_remove_index( ct->mocurs, 0 );
         g_ptr_array_remove_index( ct->tas, 0 );
         g_ptr_array_add( ct->pairs, p );
+
+        gupnp_service_proxy_set_subscribed( p->octa, TRUE );
+
+        ta_communication_error_add_notify(p->octa,
+                ta_communication_error_changed,
+                p);
+
+        udcp_message_add_notify(p->octa,
+                udcp_message_changed,
+                p);
     }
 }
 
@@ -114,10 +172,37 @@ check_for_ta(
         CtnTa* ct,
         GUsbDevice* device)
 {
+    GError* error = NULL;
     guint16 vid = g_usb_device_get_vid( device );
     guint16 pid = g_usb_device_get_pid( device );
     if( ( vid == 0x07b2 && pid == 0x6002 ) ||
             ( vid == 0x05a6 && pid == 0x0008 ) ) {
+        g_print("found ta\n");
+
+        gboolean ret = g_usb_device_open( device, &error );
+        if( !ret ) {
+            g_printerr("failed to open device %s\n", error->message);
+            g_error_free( error );
+            return;
+        }
+
+        ret = g_usb_device_set_configuration( device, 0x01, &error );
+        if( !ret ) {
+            g_printerr("failed to set config %s\n", error->message);
+            g_error_free(error);
+            return;
+        }
+
+        ret = g_usb_device_claim_interface( device, 0x00,
+                G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
+                &error);
+        if( !ret ) {
+            g_printerr("failed to claim if %s\n", error->message);
+            g_error_free(error);
+            return;
+        }
+
+
         g_ptr_array_add( ct->tas, device );
         pair( ct ); 
     }
