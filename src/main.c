@@ -11,11 +11,16 @@
 
 #include "octa_client.h"
 
-#define TA_EP_IN 0 //read
-#define TA_EP_OUT 1 //write
+#define CISCO_TA_VENDOR_ID 0x05a6
+#define CISCO_TA_PRODUCT_ID 0x0008
+#define MOT_TA_VENDOR_ID 0x07b2
+#define MOT_TA_PRODUCT_ID 0x6002
+
+#define TA_EP_READ 0x81
+#define TA_EP_WRITE 0x02
 #define TA_TIMEOUT 10000 //ms
-#define TA_BUFFER_SIZE 4096
-#define TA_RECV_BUFFERS 10
+#define TA_BUFFER_SIZE 8*1024
+#define TA_RECV_BUFFERS 5
 
 typedef struct _Pair Pair;
 
@@ -110,7 +115,7 @@ udcp_message_changed(
     guchar* message = g_base64_decode( udcp_message, &len );
 
     g_usb_device_bulk_transfer_async( p->ta,
-            TA_EP_OUT,
+            TA_EP_WRITE,
             message,
             len,
             TA_TIMEOUT,
@@ -142,9 +147,7 @@ ta_message_ready(
     if( error ) {
         g_printerr("ta read failed %s\n", error->message);
         g_error_free( error );
-
-        //TODO resubmit? or remove device?
-        return;
+        goto resubmit;
     }
 
     gchar* encoded = g_base64_encode( tab->buffer, len );
@@ -155,10 +158,10 @@ ta_message_ready(
             message_to_udcp_sent,
             p);
 
-    //resubmit
+resubmit:
     g_usb_device_bulk_transfer_async(
             p->ta,
-            TA_EP_IN,
+            TA_EP_READ,
             tab->buffer,
             TA_BUFFER_SIZE,
             0,
@@ -176,7 +179,7 @@ submit_ta_buffers(
         p->ta_buffers[i].p = p;
         g_usb_device_bulk_transfer_async(
                 p->ta,
-                TA_EP_IN,
+                TA_EP_READ,
                 p->ta_buffers[i].buffer,
                 TA_BUFFER_SIZE,
                 0,
@@ -324,8 +327,8 @@ check_for_ta(
     GError* error = NULL;
     guint16 vid = g_usb_device_get_vid( device );
     guint16 pid = g_usb_device_get_pid( device );
-    if( ( vid == 0x07b2 && pid == 0x6002 ) ||
-            ( vid == 0x05a6 && pid == 0x0008 ) ) {
+    if( ( vid == MOT_TA_VENDOR_ID && pid == MOT_TA_PRODUCT_ID ) ||
+            ( vid == CISCO_TA_VENDOR_ID && pid == CISCO_TA_PRODUCT_ID ) ) {
         g_print("found ta\n");
 
         gboolean ret = g_usb_device_open( device, &error );
