@@ -181,8 +181,6 @@ udcp_message_changed(
         gpointer userdata)
 {
     Pair* p = userdata;
-    g_print("udcp message %s\n", udcp_message);
-
     gsize len = 0;
     guchar* message = g_base64_decode( udcp_message, &len );
 
@@ -218,12 +216,13 @@ ta_message_ready(
 
     if( error ) {
         gint code = error->code;
-        g_printerr("ta read failed %s\n", error->message);
-        g_error_free( error );
         if( code == G_USB_DEVICE_ERROR_CANCELLED ||
                 code == G_USB_DEVICE_ERROR_NO_DEVICE ) {
+            g_error_free( error );
             return;
         }
+        g_printerr("ta read failed %s\n", error->message);
+        g_error_free( error );
         goto resubmit;
     }
 
