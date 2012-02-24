@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ([2.68])
+AC_PREREQ([2.63])
 AC_INIT([ctntad], [0.1], [linux@cetoncorp.com])
 AM_INIT_AUTOMAKE()
 AC_CONFIG_SRCDIR([src/main.c])
