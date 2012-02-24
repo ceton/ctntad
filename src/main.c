@@ -26,6 +26,7 @@ typedef struct _Pair Pair;
 
 typedef struct {
     Pair* p;
+    GCancellable* cancellable;
     guchar buffer[TA_BUFFER_SIZE];
 } TABuffer;
 
@@ -47,6 +48,37 @@ typedef struct {
     GPtrArray* pairs;
 } CtnTa;
 
+static void
+ta_message_ready(
+        GObject* source,
+        GAsyncResult* res,
+        gpointer user_data);
+
+static void
+submit_ta_buffers(
+        Pair* p)
+{
+    int i;
+    for( i=0; i<TA_RECV_BUFFERS; i++ ) {
+        TABuffer* tab = &p->ta_buffers[i];
+        if( !tab->cancellable ) {
+            tab->cancellable = g_cancellable_new();
+        } else {
+            g_cancellable_reset( tab->cancellable );
+        }
+
+        tab->p = p;
+        g_usb_device_bulk_transfer_async(
+                p->ta,
+                TA_EP_READ,
+                tab->buffer,
+                TA_BUFFER_SIZE,
+                0,
+                tab->cancellable,
+                ta_message_ready,
+                tab);
+    }
+}
 
 static void usb_reset_complete_finished(
         GUPnPServiceProxy *proxy,
@@ -56,20 +88,60 @@ static void usb_reset_complete_finished(
     g_print("usb reset complete finished\n");
 }
 
-static void
+static gboolean
+reset_ta_step2(
+        Pair* p)
+{
+    GError* error = NULL;
+    
+    if( !g_usb_device_reset( p->ta, &error ) ) {
+        g_printerr("ta reset failed %s\n", error->message);
+        g_error_free( error );
+        error = NULL;
+    }
+
+    if( !g_usb_device_claim_interface( p->ta, 0x00,
+            G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
+            &error) ) {
+        g_printerr("failed to claim if %s\n", error->message);
+        g_error_free(error);
+    }
+
+    g_print("reset done\n");
+    usb_reset_complete_async( p->octa, usb_reset_complete_finished, p );
+
+    submit_ta_buffers(p);
+    return FALSE;
+}
+
+static gboolean
 reset_ta(
         Pair* p)
 {
     g_print("reset ta\n");
     //TODO move this to async call
     GError* error = NULL;
-    
-    if( !g_usb_device_reset( p->ta, &error ) ) {
-        g_printerr("ta reset failed %s\n", error->message);
-        g_error_free( error );
+    int i;
+
+    //cancel outstanding transfers
+    for( i=0; i<TA_RECV_BUFFERS; i++ ) {
+        g_cancellable_cancel(p->ta_buffers[i].cancellable);
     }
-    g_print("reset done\n");
-    usb_reset_complete_async( p->octa, usb_reset_complete_finished, p );
+
+    g_usb_device_release_interface(
+            p->ta,
+            0,
+            G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
+            &error);
+
+    if( error ) {
+        g_printerr("failed to release device %s\n", error->message);
+        g_error_free( error );
+        error = NULL;
+    }
+
+    g_idle_add( (GSourceFunc)reset_ta_step2, p );
+    return FALSE;
 }
 
 static void
@@ -81,7 +153,7 @@ ta_communication_error_changed(
     Pair* p = userdata;
     g_print("ta comm error %d\n", ta_communication_error);
     if( ta_communication_error ) {
-        reset_ta(p);
+        g_idle_add((GSourceFunc)reset_ta, p);
     }
 }
 
@@ -145,8 +217,13 @@ ta_message_ready(
     gssize len = g_usb_device_bulk_transfer_finish( p->ta, res, &error );
 
     if( error ) {
+        gint code = error->code;
         g_printerr("ta read failed %s\n", error->message);
         g_error_free( error );
+        if( code == G_USB_DEVICE_ERROR_CANCELLED ||
+                code == G_USB_DEVICE_ERROR_NO_DEVICE ) {
+            return;
+        }
         goto resubmit;
     }
 
@@ -165,28 +242,9 @@ resubmit:
             tab->buffer,
             TA_BUFFER_SIZE,
             0,
-            NULL,
+            tab->cancellable,
             ta_message_ready,
             tab);
-}
-
-static void
-submit_ta_buffers(
-        Pair* p)
-{
-    int i;
-    for( i=0; i<TA_RECV_BUFFERS; i++ ) {
-        p->ta_buffers[i].p = p;
-        g_usb_device_bulk_transfer_async(
-                p->ta,
-                TA_EP_READ,
-                p->ta_buffers[i].buffer,
-                TA_BUFFER_SIZE,
-                0,
-                NULL,
-                ta_message_ready,
-                &p->ta_buffers[i]);
-    }
 }
 
 
