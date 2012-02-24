@@ -159,6 +159,15 @@ usb_reset_complete_async (GUPnPServiceProxy *proxy,
 }
 
 /* state variable UDCPMessage */
+const gchar*
+g_value_get_binbase64 (const GValue *value)
+{
+    g_return_val_if_fail (
+            G_TYPE_CHECK_VALUE_TYPE ((value), gupnp_bin_base64_get_type ()),
+            NULL);
+
+    return value->data[0].v_pointer;
+}
 
 static void
 _udcp_message_changed_callback (GUPnPServiceProxy *proxy,
@@ -170,15 +179,11 @@ _udcp_message_changed_callback (GUPnPServiceProxy *proxy,
     const gchar *udcp_message;
 
     cbdata = (GUPnPAsyncData *) userdata;
-    if( G_VALUE_HOLDS_STRING(value) ) {
-        udcp_message = g_value_get_string (value);
-        ((udcp_message_changed_callback)cbdata->cb)
-            (proxy,
-             udcp_message,
-             cbdata->userdata);
-    }
-
-    g_slice_free1 (sizeof (*cbdata), cbdata);
+    udcp_message = g_value_get_binbase64 (value);
+    ((udcp_message_changed_callback)cbdata->cb)
+        (proxy,
+         udcp_message,
+         cbdata->userdata);
 }
 
 gboolean
@@ -217,8 +222,6 @@ _ta_communication_error_changed_callback (GUPnPServiceProxy *proxy,
         (proxy,
          ta_communication_error,
          cbdata->userdata);
-
-    g_slice_free1 (sizeof (*cbdata), cbdata);
 }
 
 gboolean

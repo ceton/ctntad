@@ -247,7 +247,6 @@ resubmit:
             tab);
 }
 
-
 static void
 octa_init_complete(
         GUPnPServiceProxy *proxy,
@@ -255,6 +254,17 @@ octa_init_complete(
         gpointer userdata)
 {
     g_print("octa init complete\n");
+}
+
+static void
+octa_init_complete_disable(
+        GUPnPServiceProxy *proxy,
+        GError *error,
+        gpointer userdata)
+{
+    Pair* p = userdata;
+    g_print("octa init complete disable\n");
+    octa_init_async(p->octa, TRUE, octa_init_complete, userdata);
 }
 
 static void
@@ -303,7 +313,7 @@ pair(CtnTa* ct)
                 p);
 
         submit_ta_buffers(p);
-        octa_init_async(p->octa, TRUE, octa_init_complete, p);
+        octa_init_async(p->octa, FALSE, octa_init_complete_disable, p);
     }
 }
 
