@@ -1,8 +1,11 @@
-#                                               -*- Autoconf -*-
-# Process this file with autoconf to produce a configure script.
+m4_define([ctntad_major_version], [0])
+m4_define([ctntad_minor_version], [1])
+m4_define([ctntad_micro_version], [2])
+m4_define([ctntad_version],
+          [ctntad_major_version.ctntad_minor_version.ctntad_micro_version])
 
 AC_PREREQ([2.63])
-AC_INIT([ctntad], [0.1], [linux@cetoncorp.com])
+AC_INIT([ctntad], [ctntad_version], [linux@cetoncorp.com])
 AM_INIT_AUTOMAKE()
 AC_CONFIG_SRCDIR([src/main.c])
 AC_CONFIG_HEADERS([config.h])
