@@ -15,6 +15,11 @@ m4-ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_CONFIG_FILES(Makefile
                  src/Makefile)
 
+AC_CONFIG_MACRO_DIR([m4])
+
+LT_PREREQ([2.2.6])
+LT_INIT()
+
 # Checks for programs.
 AC_PROG_CC
 
