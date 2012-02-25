@@ -1,12 +1,12 @@
 ctntad is an implementation of the Tuning Adapter <-> MOCUR Service for the
-Ceton InfiniTV on linux. It could also run on darwin or windows, if the
+Ceton InfiniTV on linux. It could also run on OSX or Windows, if the
 library dependencies were met. It depends on gupnp and gusb.
 
-To build from a fresh clone run:
-autoreconf -i
-./configure
+To build and install:
+./configure --prefix=/usr
 make
+make install (as root)
 
-Successive updates should generally only require running make
-
+This will install /usr/bin/ctntad which must be run as root currently. It will
+automatically pair any found TA's and InfiniTVs.
 
