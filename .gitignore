@@ -5,7 +5,7 @@ Makefile.in
 src/ctntad
 aclocal.m4
 config.h
-config.h.in
+config.h.in*
 config.log
 config.status
 autom4te.cache
@@ -15,3 +15,5 @@ install-sh
 src/.deps
 stamp-h1
 configure
+libtool
+build-aux
