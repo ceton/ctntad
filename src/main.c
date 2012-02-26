@@ -187,8 +187,8 @@ udcp_message_changed(
 {
     Pair* p = userdata;
     gsize len = 0;
-    g_print("mocur -> ta '%s'\n", udcp_message);
     guchar* message = g_base64_decode( udcp_message, &len );
+    g_print("mocur -> ta: %d bytes\n", len);
 
     if( strlen( message ) ) {
         g_usb_device_bulk_transfer_async( p->ta,
@@ -236,7 +236,7 @@ ta_message_ready(
 
     gchar* encoded = g_base64_encode( tab->buffer, len );
 
-    g_print("ta -> mocur '%s'\n", encoded);
+    g_print("ta -> mocur: %d bytes\n", len);
 
     send_message_to_udcp_async(
             p->octa,
