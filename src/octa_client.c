@@ -55,6 +55,45 @@ send_message_to_udcp_async (GUPnPServiceProxy *proxy,
     return action;
 }
 
+static void _octa_get_enable_octa_async_callback(GUPnPServiceProxy* proxy,
+        GUPnPServiceProxyAction* action,
+        gpointer userdata)
+{
+    GUPnPAsyncData* cbdata = userdata;
+    GError* error = NULL;
+    gboolean octa_enable = FALSE;
+
+    gupnp_service_proxy_end_action(
+            proxy, action, &error,
+            "return", G_TYPE_BOOLEAN, &octa_enable,
+            NULL);
+
+    ((get_octa_enable_reply)cbdata->cb)(
+        proxy, octa_enable, error, cbdata->userdata);
+
+    g_slice_free1(sizeof(*cbdata), cbdata);
+}
+
+GUPnPServiceProxyAction*
+octa_get_enable_octa_async(GUPnPServiceProxy* proxy,
+        get_octa_enable_reply callback,
+        gpointer userdata)
+{
+    GUPnPServiceProxyAction* action;
+    GUPnPAsyncData* cbdata;
+    
+    cbdata = g_slice_alloc(sizeof(*cbdata));
+    cbdata->cb = G_CALLBACK(callback);
+    cbdata->userdata = userdata;
+    action = gupnp_service_proxy_begin_action(
+            proxy, "QueryStateVariable",
+            _octa_get_enable_octa_async_callback, cbdata,
+            "varName", G_TYPE_STRING, "A_ARG_TYPE_OCTA_ENABLE",
+            NULL);
+
+    return action;
+}
+
 /* action OCTAInit */
 
 gboolean
@@ -99,6 +138,7 @@ octa_init_async (GUPnPServiceProxy *proxy,
     cbdata = (GUPnPAsyncData *) g_slice_alloc (sizeof (*cbdata));
     cbdata->cb = G_CALLBACK (callback);
     cbdata->userdata = userdata;
+    g_print("OCTAInit %d\n", in_enable_octa);
     action = gupnp_service_proxy_begin_action
         (proxy, "OCTAInit",
          _octa_init_async_callback, cbdata,

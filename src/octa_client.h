@@ -36,6 +36,11 @@ octa_init_async (GUPnPServiceProxy *proxy,
         gpointer userdata);
 
 
+typedef void (*get_octa_enable_reply) (GUPnPServiceProxy *proxy,
+        gboolean octa_enable,
+        GError *error,
+        gpointer userdata);
+
 gboolean
 usb_reset_complete (GUPnPServiceProxy *proxy,
         GError **error);

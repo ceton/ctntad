@@ -8,6 +8,7 @@
 #include <gusb.h>
 #include <libgupnp/gupnp.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "octa_client.h"
 
@@ -53,6 +54,10 @@ ta_message_ready(
         GObject* source,
         GAsyncResult* res,
         gpointer user_data);
+
+static gboolean
+disable_octa(
+        gpointer userdata);
 
 static void
 submit_ta_buffers(
@@ -182,16 +187,19 @@ udcp_message_changed(
 {
     Pair* p = userdata;
     gsize len = 0;
+    g_print("mocur -> ta '%s'\n", udcp_message);
     guchar* message = g_base64_decode( udcp_message, &len );
 
-    g_usb_device_bulk_transfer_async( p->ta,
-            TA_EP_WRITE,
-            message,
-            len,
-            TA_TIMEOUT,
-            NULL,
-            udcp_message_sent,
-            p);
+    if( strlen( message ) ) {
+        g_usb_device_bulk_transfer_async( p->ta,
+                TA_EP_WRITE,
+                message,
+                len,
+                TA_TIMEOUT,
+                NULL,
+                udcp_message_sent,
+                p);
+    }
 }
 
 
@@ -228,6 +236,8 @@ ta_message_ready(
 
     gchar* encoded = g_base64_encode( tab->buffer, len );
 
+    g_print("ta -> mocur '%s'\n", encoded);
+
     send_message_to_udcp_async(
             p->octa,
             encoded,
@@ -252,7 +262,22 @@ octa_init_complete(
         GError *error,
         gpointer userdata)
 {
+    if( error ) {
+        g_printerr("octa init failed %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+        return;
+    }
     g_print("octa init complete\n");
+}
+
+static gboolean
+enable_octa(
+        gpointer userdata)
+{
+    Pair* p = userdata;
+    octa_init_async(p->octa, TRUE, octa_init_complete, userdata);
+    return FALSE;
 }
 
 static void
@@ -262,8 +287,52 @@ octa_init_complete_disable(
         gpointer userdata)
 {
     Pair* p = userdata;
-    g_print("octa init complete disable\n");
-    octa_init_async(p->octa, TRUE, octa_init_complete, userdata);
+
+    if( error ) {
+        g_printerr("octa init failed %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+        //retry
+        g_timeout_add( 1, disable_octa, userdata );
+        return;
+    }
+
+    g_print("disable octa complete\n");
+    g_timeout_add_seconds(1, enable_octa, userdata);
+}
+
+static gboolean
+disable_octa(
+        gpointer userdata)
+{
+    Pair* p = userdata;
+    octa_init_async(p->octa, FALSE, octa_init_complete_disable, p);
+    return FALSE;
+}
+
+static void
+octa_get_enable_octa(
+        GUPnPServiceProxy* proxy,
+        gboolean octa_enable,
+        GError* error,
+        gpointer userdata)
+{
+    Pair* p = userdata;
+
+    if( error ) {
+        g_printerr("failed to get octa_enable %s\n", error->message);
+        g_error_free( error );
+        error = NULL;
+        return;
+    }
+
+    g_print("octa_enable was %d\n", octa_enable);
+
+    if( octa_enable ) {
+        g_timeout_add( 1, disable_octa, userdata );
+    } else {
+        g_timeout_add( 1, enable_octa, userdata );
+    }
 }
 
 static void
@@ -312,7 +381,7 @@ pair(CtnTa* ct)
                 p);
 
         submit_ta_buffers(p);
-        octa_init_async(p->octa, FALSE, octa_init_complete_disable, p);
+        octa_get_enable_octa_async(p->octa, octa_get_enable_octa, p);
     }
 }
 
