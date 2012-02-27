@@ -162,20 +162,29 @@ ta_communication_error_changed(
     }
 }
 
+typedef struct {
+    Pair* p;
+    guchar* buffer; 
+} SendContext;
+
 static void
 udcp_message_sent(
         GObject* source,
         GAsyncResult* res,
         gpointer user_data)
 {
+    SendContext* sc = user_data;
     GError* error = NULL;
-    Pair* p = user_data;
+    Pair* p = sc->p;
     g_usb_device_bulk_transfer_finish( p->ta, res, &error );
+
+    g_free( sc->buffer );
+    g_slice_free1( sizeof(SendContext), sc );
 
     if( error ) {
         g_printerr("ta write failed %s\n", error->message);
         g_error_free( error );
-        return;
+        error = NULL;
     }
 }
 
@@ -191,6 +200,10 @@ udcp_message_changed(
     g_print("mocur -> ta: %d bytes\n", len);
 
     if( strlen( message ) ) {
+        SendContext* sc = g_slice_new(SendContext);
+        sc->p = p;
+        sc->buffer = message;
+
         g_usb_device_bulk_transfer_async( p->ta,
                 TA_EP_WRITE,
                 message,
@@ -198,7 +211,7 @@ udcp_message_changed(
                 TA_TIMEOUT,
                 NULL,
                 udcp_message_sent,
-                p);
+                sc);
     }
 }
 
