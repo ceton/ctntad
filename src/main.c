@@ -56,6 +56,10 @@ ta_message_ready(
         gpointer user_data);
 
 static gboolean
+enable_octa(
+        gpointer userdata);
+
+static gboolean
 disable_octa(
         gpointer userdata);
 
@@ -279,6 +283,7 @@ octa_init_complete(
         g_printerr("octa init failed %s\n", error->message);
         g_error_free(error);
         error = NULL;
+        g_timeout_add( 1, enable_octa, userdata );
         return;
     }
     g_print("octa init complete\n");
@@ -606,6 +611,8 @@ int main(int argc, char** argv)
 
     g_thread_init(NULL);
     g_type_init();
+
+    g_print("Starting %s\n", PACKAGE_STRING);
 
     CtnTa* ct = g_slice_new0( CtnTa );
 
