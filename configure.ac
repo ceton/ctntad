@@ -1,6 +1,6 @@
 m4_define([ctntad_major_version], [0])
 m4_define([ctntad_minor_version], [1])
-m4_define([ctntad_micro_version], [4])
+m4_define([ctntad_micro_version], [5])
 m4_define([ctntad_version],
           [ctntad_major_version.ctntad_minor_version.ctntad_micro_version])
 
@@ -27,7 +27,7 @@ AC_PROG_CC
 
 # Checks for libraries.
 PKG_CHECK_MODULES(GUPNP, gupnp-1.0)
-PKG_CHECK_MODULES(GUSB, gusb)
+PKG_CHECK_MODULES(GUSB, gusb >= 0.1.4 )
 
 # Checks for header files.
 AC_CHECK_HEADERS(stdlib.h)
