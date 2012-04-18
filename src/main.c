@@ -605,12 +605,29 @@ setup_usb(CtnTa* ct)
     g_ptr_array_unref( devices );
 }
 
+static gchar* interface = NULL;
+
+static GOptionEntry options[] = {
+    { "interface", 'i', 0, G_OPTION_ARG_STRING, &interface, "IP interface to bind to", "I" },
+    { NULL }
+};
+
 int main(int argc, char** argv)
 {
     GError* error = NULL;
+    GOptionContext* option_ctx = NULL;
 
     g_thread_init(NULL);
     g_type_init();
+
+
+    option_ctx = g_option_context_new( " - Tuning Adapter service for the Ceton InfiniTV" );
+    g_option_context_add_main_entries( option_ctx, options, NULL );
+
+    if( !g_option_context_parse( option_ctx, &argc, &argv, &error ) ) {
+        g_print("Option parsing failed: %s\n", error->message);
+        return EXIT_FAILURE;
+    }
 
     g_print("Starting %s\n", PACKAGE_STRING);
 
@@ -619,7 +636,7 @@ int main(int argc, char** argv)
     ct->mocurs = g_ptr_array_new();
     ct->tas = g_ptr_array_new();
     ct->pairs = g_ptr_array_new();
-    ct->context = gupnp_context_new( NULL, NULL, 0, &error );
+    ct->context = gupnp_context_new( NULL, interface, 0, &error );
 
     if( error ) {
         g_printerr("Error creating the GUPnP context: %s\n",
