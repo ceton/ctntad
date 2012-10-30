@@ -1,6 +1,6 @@
 m4_define([ctntad_major_version], [0])
-m4_define([ctntad_minor_version], [1])
-m4_define([ctntad_micro_version], [7])
+m4_define([ctntad_minor_version], [2])
+m4_define([ctntad_micro_version], [0])
 m4_define([ctntad_version],
           [ctntad_major_version.ctntad_minor_version.ctntad_micro_version])
 

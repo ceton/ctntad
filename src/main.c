@@ -20,7 +20,7 @@
 #define TA_EP_READ 0x81
 #define TA_EP_WRITE 0x02
 #define TA_TIMEOUT 10000 //ms
-#define TA_BUFFER_SIZE 8*1024
+#define TA_BUFFER_SIZE 16*1024
 #define TA_RECV_BUFFERS 5
 
 static guint16 g_bus = 0xFFFF;
@@ -39,6 +39,7 @@ struct _Pair {
     GUPnPServiceProxy* octa;
     GUsbDevice* ta;
     TABuffer ta_buffers[TA_RECV_BUFFERS];
+    gint refs;
 };
 
 typedef struct {
@@ -63,8 +64,40 @@ enable_octa(
         gpointer userdata);
 
 static gboolean
-disable_octa(
+toggle_octa(
         gpointer userdata);
+
+static Pair*
+pair_new()
+{
+    Pair* p = g_slice_new0(Pair);
+    p->refs = 1;
+    return p;
+}
+
+static void
+pair_ref(Pair* p)
+{
+    if(!p) { 
+        g_print("!pair on ref\n");        
+        return;
+    }
+
+    g_atomic_int_inc( &p->refs );
+}
+
+static void
+pair_unref(Pair* p)
+{
+    if(!p) { 
+        g_print("!pair on unref\n");        
+        return;
+    }
+
+    if( g_atomic_int_dec_and_test( &p->refs ) ) {
+        g_free( p );
+    }
+}
 
 static void
 submit_ta_buffers(
@@ -78,6 +111,8 @@ submit_ta_buffers(
         } else {
             g_cancellable_reset( tab->cancellable );
         }
+
+        pair_ref(p);
 
         tab->p = p;
         g_usb_device_bulk_transfer_async(
@@ -123,6 +158,7 @@ reset_ta_step2(
     usb_reset_complete_async( p->octa, usb_reset_complete_finished, p );
 
     submit_ta_buffers(p);
+    pair_unref(p);
     return FALSE;
 }
 
@@ -157,6 +193,13 @@ reset_ta(
 }
 
 static void
+schedule_ta_reset(Pair* p)
+{
+    pair_ref(p);
+    g_idle_add((GSourceFunc)reset_ta, p);
+}
+
+static void
 ta_communication_error_changed(
         GUPnPServiceProxy *proxy,
         gboolean ta_communication_error,
@@ -165,7 +208,7 @@ ta_communication_error_changed(
     Pair* p = userdata;
     g_print("ta comm error %d\n", ta_communication_error);
     if( ta_communication_error ) {
-        g_idle_add((GSourceFunc)reset_ta, p);
+        schedule_ta_reset(p);
     }
 }
 
@@ -187,6 +230,7 @@ udcp_message_sent(
 
     g_free( sc->buffer );
     g_slice_free1( sizeof(SendContext), sc );
+    pair_unref(p);
 
     if( error ) {
         g_printerr("ta write failed %s\n", error->message);
@@ -208,6 +252,7 @@ udcp_message_changed(
 
     if( strlen( message ) ) {
         SendContext* sc = g_slice_new(SendContext);
+        pair_ref(p);
         sc->p = p;
         sc->buffer = message;
 
@@ -247,6 +292,7 @@ ta_message_ready(
         if( code == G_USB_DEVICE_ERROR_CANCELLED ||
                 code == G_USB_DEVICE_ERROR_NO_DEVICE ) {
             g_error_free( error );
+            pair_unref(p);
             return;
         }
         g_printerr("ta read failed %s\n", error->message);
@@ -296,8 +342,8 @@ static gboolean
 enable_octa(
         gpointer userdata)
 {
-    Pair* p = userdata;
-    octa_init_async(p->octa, TRUE, octa_init_complete, userdata);
+    GUPnPServiceProxy* octa = userdata;
+    octa_init_async(octa, TRUE, octa_init_complete, userdata);
     return FALSE;
 }
 
@@ -307,39 +353,62 @@ octa_init_complete_disable(
         GError *error,
         gpointer userdata)
 {
-    Pair* p = userdata;
+    if( error ) {
+        g_printerr("octa init failed %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+        return;
+    }
 
+    g_print("disable octa complete\n");
+    g_object_unref( proxy );
+}
+
+static gboolean
+disable_octa(
+        GUPnPServiceProxy* octa)
+{
+    octa_init_async(octa, FALSE, octa_init_complete_disable, NULL);
+    return FALSE;
+}
+
+
+static void
+octa_init_complete_toggle(
+        GUPnPServiceProxy *proxy,
+        GError *error,
+        gpointer userdata)
+{
     if( error ) {
         g_printerr("octa init failed %s\n", error->message);
         g_error_free(error);
         error = NULL;
         //retry
-        g_timeout_add( 1, disable_octa, userdata );
+        g_timeout_add( 1, toggle_octa, userdata );
         return;
     }
 
-    g_print("disable octa complete\n");
+    g_print("disable octa complete, scheduling re-enable\n");
     g_timeout_add_seconds(1, enable_octa, userdata);
 }
 
+
 static gboolean
-disable_octa(
+toggle_octa(
         gpointer userdata)
 {
-    Pair* p = userdata;
-    octa_init_async(p->octa, FALSE, octa_init_complete_disable, p);
+    GUPnPServiceProxy* octa = userdata;
+    octa_init_async(octa, FALSE, octa_init_complete_toggle, userdata);
     return FALSE;
 }
 
 static void
-octa_get_enable_octa(
+octa_get_enable_octa_complete(
         GUPnPServiceProxy* proxy,
         gboolean octa_enable,
         GError* error,
         gpointer userdata)
 {
-    Pair* p = userdata;
-
     if( error ) {
         g_printerr("failed to get octa_enable %s\n", error->message);
         g_error_free( error );
@@ -350,9 +419,9 @@ octa_get_enable_octa(
     g_print("octa_enable was %d\n", octa_enable);
 
     if( octa_enable ) {
-        g_timeout_add( 1, disable_octa, userdata );
+        g_timeout_add( 1, toggle_octa, proxy );
     } else {
-        g_timeout_add( 1, enable_octa, userdata );
+        g_timeout_add( 1, enable_octa, proxy );
     }
 }
 
@@ -363,7 +432,7 @@ pair(CtnTa* ct)
         GUPnPDeviceProxy* mocur = g_ptr_array_index( ct->mocurs, 0 );
         GUsbDevice* ta = g_ptr_array_index( ct->tas, 0 );
 
-        Pair* p = g_slice_new0( Pair );
+        Pair* p = pair_new();
         p->mocur = mocur;
         p->ta = ta;
 
@@ -402,7 +471,7 @@ pair(CtnTa* ct)
                 p);
 
         submit_ta_buffers(p);
-        octa_get_enable_octa_async(p->octa, octa_get_enable_octa, p);
+        octa_get_enable_octa_async(p->octa, octa_get_enable_octa_complete, NULL);
     }
 }
 
@@ -438,7 +507,7 @@ remove_mocur(
             g_ptr_array_add( ct->tas, p->ta );
             g_object_unref( p->octa );
             g_object_unref( p->mocur );
-            g_free( p );
+            pair_unref( p );
             break;
         }
     }
@@ -545,7 +614,8 @@ check_for_removed_ta(
     guint16 bus_remove = g_usb_device_get_bus( device );
     guint16 address_remove = g_usb_device_get_address( device );
 
-    int i;
+    int i,j;
+    GError* error = NULL;
     //check pairings for this usb device first
     for( i=0; i<ct->pairs->len; i++ ) {
         Pair* p = g_ptr_array_index( ct->pairs, i );
@@ -553,12 +623,35 @@ check_for_removed_ta(
         guint16 address = g_usb_device_get_address( p->ta );
         if( ( bus == bus_remove ) && ( address == address_remove ) ) {
 
+            g_print("ta %x.%x gone\n", bus, address);
+
+            g_object_ref( p->octa );
+            disable_octa( p->octa );
+
             g_ptr_array_remove_index_fast( ct->pairs, i );
 
             g_ptr_array_add( ct->mocurs, p->mocur );
             g_object_unref( p->octa );
+
+            //cancel outstanding transfers
+            for( j=0; j<TA_RECV_BUFFERS; j++ ) {
+                g_cancellable_cancel(p->ta_buffers[i].cancellable);
+            }
+
+            g_usb_device_release_interface(
+                    p->ta,
+                    0,
+                    G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
+                    &error);
+
+            if( error ) {
+                g_printerr("failed to release device %s\n", error->message);
+                g_error_free( error );
+                error = NULL;
+            }
+
             g_object_unref( p->ta );
-            g_free( p );
+            pair_unref( p );
             break;
         }
     }
@@ -614,12 +707,58 @@ setup_usb(CtnTa* ct)
     g_ptr_array_unref( devices );
 }
 
+static gboolean
+stdin_cb(
+        GIOChannel* iochannel, GIOCondition condition, gpointer data)
+{
+    CtnTa* ct = data;
+
+    if( condition & G_IO_ERR ) {
+        g_print("stdin error\n");
+        goto error;
+    }
+
+    if( condition & G_IO_IN ) {
+        GIOError error;
+        gchar buffer[1024] = {};
+        gsize bytes_read;
+
+        error = g_io_channel_read(iochannel, buffer, sizeof(buffer), &bytes_read);
+
+        if( error != G_IO_ERROR_NONE ) {
+            g_print("failed to read stdin\n");
+            goto error;
+        }
+
+        if( bytes_read == 0 ) {
+            goto error;
+        }
+
+        if( strncmp( buffer, "reset", strlen("reset") ) == 0 ) {
+            if( ct->pairs->len ) {
+                Pair* p = g_ptr_array_index( ct->pairs, 0 );
+                schedule_ta_reset(p);
+            } else {
+                g_print("No pair found\n");
+            }
+        } else {
+            g_print("Commands available:\n");
+            g_print("\treset\n");
+        }
+    }
+
+    return TRUE;
+error:
+    return FALSE;
+}
+
 static void
 list_usb(CtnTa* ct)
 {
     GPtrArray* devices;
     GUsbDevice* device;
     int i;
+    int found = 0;
 
     ct->usb_list = g_usb_device_list_new( ct->usb_context );
     g_usb_device_list_coldplug( ct->usb_list );
@@ -642,9 +781,14 @@ list_usb(CtnTa* ct)
             } else {
                 g_print("Found Unknown Tuning Adapter on bus %d address %d\n", bus, addr);
             }
+            found = 1;
         }
     }
 
+    if( !found ) {
+        g_print("No Tuning Adapters found\n");
+    }
+    
     g_ptr_array_unref( devices );
 }
 
@@ -713,6 +857,11 @@ int main(int argc, char** argv)
     if(list_tas) {
         list_usb(ct);
     } else {
+
+        GIOChannel* in = g_io_channel_unix_new(fileno(stdin));
+        g_io_add_watch(in, G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+                stdin_cb, ct);
+
         ct->main_loop = g_main_loop_new( NULL, FALSE );
 
         setup_upnp(ct);
@@ -723,7 +872,10 @@ int main(int argc, char** argv)
         g_main_loop_unref( ct->main_loop );
     }
 
-    g_object_unref( ct->cp );
+    if( ct->cp ) {
+        g_object_unref( ct->cp );
+    }
+
     g_object_unref( ct->context );
     g_object_unref( ct->usb_list );
     g_object_unref( ct->usb_context );
