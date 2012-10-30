@@ -1,9 +1,8 @@
-ctntad is an implementation of the Tuning Adapter <-> MOCUR Service for the
-Ceton InfiniTV on linux. It could also run on OSX or Windows, if the
-library dependencies were met. It depends on gupnp and gusb.
+ctntad is an implementation of the Tuning Adapter service for the Ceton InfiniTV to
+support Switch Digital Video on linux
 
-Currently it requires a custom gusb library available here:
-http://cetoncorp.com/downloads/libgusb-0.1.4.tar.xz
+Currently it requires git HEAD of gusb, or you can download a known working
+tarball here: http://cetoncorp.com/downloads/libgusb-0.1.4.tar.xz
 
 Follow the following steps for first libgusb, then ctntad:
 ./configure --prefix=/usr
