@@ -23,6 +23,9 @@
 #define TA_BUFFER_SIZE 8*1024
 #define TA_RECV_BUFFERS 5
 
+static guint16 g_bus = 0xFFFF;
+static guint16 g_addr = 0xFFFF;
+
 typedef struct _Pair Pair;
 
 typedef struct {
@@ -379,8 +382,8 @@ pair(CtnTa* ct)
 
         
         const char* udn = gupnp_device_info_get_udn( GUPNP_DEVICE_INFO(p->mocur) );
-        guint8 bus = g_usb_device_get_bus( p->ta );
-        guint8 address = g_usb_device_get_address( p->ta );
+        guint16 bus = g_usb_device_get_bus( p->ta );
+        guint16 address = g_usb_device_get_address( p->ta );
 
         g_print("paired '%s' and %x:%x\n", udn, bus, address);
      
@@ -483,34 +486,40 @@ check_for_ta(
     guint16 pid = g_usb_device_get_pid( device );
     if( ( vid == MOT_TA_VENDOR_ID && pid == MOT_TA_PRODUCT_ID ) ||
             ( vid == CISCO_TA_VENDOR_ID && pid == CISCO_TA_PRODUCT_ID ) ) {
-        g_print("found ta\n");
 
-        gboolean ret = g_usb_device_open( device, &error );
-        if( !ret ) {
-            g_printerr("failed to open device %s\n", error->message);
-            g_error_free( error );
-            return;
+        guint16 bus = g_usb_device_get_bus(device);
+        guint16 addr = g_usb_device_get_address(device);
+
+        if( (g_bus == 0xFFFF || g_bus == bus) && (g_addr == 0xFFFF || g_addr == addr) ) {
+            g_print("found ta on bus %d addr %d\n", bus, addr);
+
+            gboolean ret = g_usb_device_open( device, &error );
+            if( !ret ) {
+                g_printerr("failed to open device %s\n", error->message);
+                g_error_free( error );
+                return;
+            }
+
+            ret = g_usb_device_set_configuration( device, 0x01, &error );
+            if( !ret ) {
+                g_printerr("failed to set config %s\n", error->message);
+                g_error_free(error);
+                return;
+            }
+
+            ret = g_usb_device_claim_interface( device, 0x00,
+                    G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
+                    &error);
+            if( !ret ) {
+                g_printerr("failed to claim if %s\n", error->message);
+                g_error_free(error);
+                return;
+            }
+
+
+            g_ptr_array_add( ct->tas, device );
+            pair( ct ); 
         }
-
-        ret = g_usb_device_set_configuration( device, 0x01, &error );
-        if( !ret ) {
-            g_printerr("failed to set config %s\n", error->message);
-            g_error_free(error);
-            return;
-        }
-
-        ret = g_usb_device_claim_interface( device, 0x00,
-                G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER,
-                &error);
-        if( !ret ) {
-            g_printerr("failed to claim if %s\n", error->message);
-            g_error_free(error);
-            return;
-        }
-
-
-        g_ptr_array_add( ct->tas, device );
-        pair( ct ); 
     }
 }
 
@@ -533,15 +542,15 @@ check_for_removed_ta(
         CtnTa* ct,
         GUsbDevice* device)
 {
-    guint8 bus_remove = g_usb_device_get_bus( device );
-    guint8 address_remove = g_usb_device_get_address( device );
+    guint16 bus_remove = g_usb_device_get_bus( device );
+    guint16 address_remove = g_usb_device_get_address( device );
 
     int i;
     //check pairings for this usb device first
     for( i=0; i<ct->pairs->len; i++ ) {
         Pair* p = g_ptr_array_index( ct->pairs, i );
-        guint8 bus = g_usb_device_get_bus( p->ta );
-        guint8 address = g_usb_device_get_address( p->ta );
+        guint16 bus = g_usb_device_get_bus( p->ta );
+        guint16 address = g_usb_device_get_address( p->ta );
         if( ( bus == bus_remove ) && ( address == address_remove ) ) {
 
             g_ptr_array_remove_index_fast( ct->pairs, i );
@@ -556,8 +565,8 @@ check_for_removed_ta(
 
     for( i=0; i<ct->tas->len; i++ ) {
         GUsbDevice* d = g_ptr_array_index( ct->tas, i );
-        guint8 bus = g_usb_device_get_bus( d );
-        guint8 address = g_usb_device_get_address( d );
+        guint16 bus = g_usb_device_get_bus( d );
+        guint16 address = g_usb_device_get_address( d );
         if( ( bus == bus_remove ) && ( address == address_remove ) ) {
             g_ptr_array_remove_index_fast( ct->tas, i );
         }
@@ -605,10 +614,50 @@ setup_usb(CtnTa* ct)
     g_ptr_array_unref( devices );
 }
 
+static void
+list_usb(CtnTa* ct)
+{
+    GPtrArray* devices;
+    GUsbDevice* device;
+    int i;
+
+    ct->usb_list = g_usb_device_list_new( ct->usb_context );
+    g_usb_device_list_coldplug( ct->usb_list );
+
+    devices = g_usb_device_list_get_devices( ct->usb_list );
+    for( i=0; i<devices->len; i++ ) {
+        device = g_ptr_array_index( devices, i );
+
+        guint16 vid = g_usb_device_get_vid( device );
+        guint16 pid = g_usb_device_get_pid( device );
+        if( ( vid == MOT_TA_VENDOR_ID && pid == MOT_TA_PRODUCT_ID ) ||
+                ( vid == CISCO_TA_VENDOR_ID && pid == CISCO_TA_PRODUCT_ID ) ) {
+            guint16 bus = g_usb_device_get_bus(device);
+            guint16 addr = g_usb_device_get_address(device);
+
+            if(vid == MOT_TA_VENDOR_ID) {
+                g_print("Found Motorola Tuning Adapter on bus %d address %d\n", bus, addr);
+            } else if(vid == CISCO_TA_VENDOR_ID) {
+                g_print("Found Cisco Tuning Adapter on bus %d address %d\n", bus, addr);
+            } else {
+                g_print("Found Unknown Tuning Adapter on bus %d address %d\n", bus, addr);
+            }
+        }
+    }
+
+    g_ptr_array_unref( devices );
+}
+
 static gchar* interface = NULL;
+static gboolean list_tas = FALSE;
+static gint i_bus = -1;
+static gint i_addr = -1;
 
 static GOptionEntry options[] = {
     { "interface", 'i', 0, G_OPTION_ARG_STRING, &interface, "IP interface to bind to", "I" },
+    { "bus", 'b', 0, G_OPTION_ARG_INT, &i_bus, "bus of the TA you want to use", NULL },
+    { "address", 'a', 0, G_OPTION_ARG_INT, &i_addr, "address of the TA you want to use", NULL },
+    { "list-tas", 'l', 0, G_OPTION_ARG_NONE, &list_tas, "List the TAs found", NULL },
     { NULL }
 };
 
@@ -619,7 +668,6 @@ int main(int argc, char** argv)
 
     g_thread_init(NULL);
     g_type_init();
-
 
     option_ctx = g_option_context_new( " - Tuning Adapter service for the Ceton InfiniTV" );
     g_option_context_add_main_entries( option_ctx, options, NULL );
@@ -638,6 +686,14 @@ int main(int argc, char** argv)
     ct->pairs = g_ptr_array_new();
     ct->context = gupnp_context_new( NULL, interface, 0, &error );
 
+    if(i_bus != -1) {
+        g_bus = (guint16)i_bus;
+    }
+
+    if(i_addr != -1) {
+        g_addr = (guint16)i_addr;
+    }
+
     if( error ) {
         g_printerr("Error creating the GUPnP context: %s\n",
                 error->message);
@@ -653,15 +709,20 @@ int main(int argc, char** argv)
         g_error_free(error);
         return EXIT_FAILURE;
     }
- 
-    ct->main_loop = g_main_loop_new( NULL, FALSE );
 
-    setup_upnp(ct);
-    setup_usb(ct);
+    if(list_tas) {
+        list_usb(ct);
+    } else {
+        ct->main_loop = g_main_loop_new( NULL, FALSE );
 
-    g_main_loop_run(ct->main_loop);
+        setup_upnp(ct);
+        setup_usb(ct);
 
-    g_main_loop_unref( ct->main_loop );
+        g_main_loop_run(ct->main_loop);
+
+        g_main_loop_unref( ct->main_loop );
+    }
+
     g_object_unref( ct->cp );
     g_object_unref( ct->context );
     g_object_unref( ct->usb_list );
