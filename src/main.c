@@ -719,13 +719,14 @@ stdin_cb(
     }
 
     if( condition & G_IO_IN ) {
-        GIOError error;
+        GIOStatus status;
+        GError* error = NULL;
         gchar buffer[1024] = {};
         gsize bytes_read;
 
-        error = g_io_channel_read(iochannel, buffer, sizeof(buffer), &bytes_read);
+        status = g_io_channel_read_chars(iochannel, buffer, sizeof(buffer), &bytes_read, &error);
 
-        if( error != G_IO_ERROR_NONE ) {
+        if( status != G_IO_STATUS_NORMAL ) {
             g_print("failed to read stdin\n");
             goto error;
         }
@@ -809,9 +810,6 @@ int main(int argc, char** argv)
 {
     GError* error = NULL;
     GOptionContext* option_ctx = NULL;
-
-    g_thread_init(NULL);
-    g_type_init();
 
     option_ctx = g_option_context_new( " - Tuning Adapter service for the Ceton InfiniTV" );
     g_option_context_add_main_entries( option_ctx, options, NULL );
