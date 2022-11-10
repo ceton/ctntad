@@ -5,6 +5,7 @@ Currently it requires git HEAD of gusb, or you can download a known working
 tarball here: http://cetoncorp.com/downloads/libgusb-0.1.4.tar.xz
 
 Follow the following steps for first libgusb, then ctntad:
+./autogen.sh
 ./configure --prefix=/usr
 make
 make install (as root)
@@ -12,3 +13,9 @@ make install (as root)
 This will install /usr/bin/ctntad which must be run as root currently. It will
 automatically pair any found TA's and InfiniTVs.
 
+
+Ubuntu Dependencies
+
+apt install libtool autoconf automake make
+apt install libgupnp-1.2-dev
+apt install libgusb-dev

@@ -826,7 +826,7 @@ int main(int argc, char** argv)
     ct->mocurs = g_ptr_array_new();
     ct->tas = g_ptr_array_new();
     ct->pairs = g_ptr_array_new();
-    ct->context = gupnp_context_new( NULL, interface, 0, &error );
+    ct->context = gupnp_context_new( interface, 0, &error );
 
     if(i_bus != -1) {
         g_bus = (guint16)i_bus;
